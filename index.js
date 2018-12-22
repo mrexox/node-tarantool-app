@@ -1,6 +1,7 @@
 const Koa = require("koa");
 const KoaRouter = require("koa-router");
 const KoaBody = require("koa-body");
+const KoaSession = require('koa-session');
 const Handlebars = require("handlebars");
 const Crypto = require("crypto");
 const Db = require("./db");
@@ -16,6 +17,19 @@ const router = new KoaRouter();
 // Setups
 // -------------------------------------------------------------------
 app.keys = ["secret1", "2key"];
+const SESSION_CONFIG = {
+    key: 'koa:sess', /** (string) cookie key (default is koa:sess) */
+    /** (number || 'session') maxAge in ms (default is 1 days) */
+    /** 'session' will result in a cookie that expires when session/browser is closed */
+    /** Warning: If a session cookie is stolen, this cookie will never expire */
+    maxAge: 86400000,
+    autoCommit: true, /** (boolean) automatically commit headers (default true) */
+    overwrite: true, /** (boolean) can overwrite or not (default true) */
+    httpOnly: true, /** (boolean) httpOnly or not (default true) */
+    signed: true, /** (boolean) signed or not (default true) */
+    rolling: false, /** (boolean) Force a session identifier cookie to be set on every response. The expiration is reset to the original maxAge, resetting the expiration countdown. (default is false) */
+    renew: false, /** (boolean) renew session when session is nearly expired, so we can always keep user logged in. (default is false)*/
+};
 
 // Routes
 // -------------------------------------------------------------------
@@ -32,27 +46,33 @@ router.get("/", (ctx, next) => {
     }
 
     let status = Tarantool.checkTokens([login, token_short, token_long]);
+    switch(status){
+        case 'update_long':
+            let token_long = updateLongToken(ctx);
+            Tarantool.updateToken({
+                login: login,
+                token_long: token_long,
+            });
+            break;
 
-    if (status === 'update_long') {
-    let token_long = updateLongToken(ctx);
-    Tarantool.updateToken({
-        login: login,
-        token_long: token_long,
-    });
-    } else if (status == 'update_short') {
-    let token_short = updateShortToken(ctx);
-    Tarantool.updateToken({
-        login: login,
-        token_short: token_short,
-    });
-    } else if (staus === 'bad') {
-    ctx.redirect("/login");
-    } else { /* fine */
-    ctx.body = processTemplate("views/index.hbs", {
-        text: "Welcome on page",
-        user: login || "Anonymous67",
-    });
+        case 'update_short':
+            let token_short = updateShortToken(ctx);
+            Tarantool.updateToken({
+                login: login,
+                token_short: token_short,
+            });
+            break;
+
+        case 'bad':
+            ctx.redirect("/login");
+
+        default:
+            ctx.body = processTemplate("views/index.hbs", {
+                text: "Welcome on page",
+                user: login || "Anonymous67",
+            });
     }
+
     logok();
 });
 
@@ -103,19 +123,21 @@ router.post("/register", (ctx, next) => {
     logpost("/register");
     console.log(ctx.request.body);
     registerUser(ctx.request.body.login, ctx.request.body.password)
-    .then(
-        login => {
-        let [token_short, token_long] = addTokens(ctx);
-        Tarantool.saveTokens({
-            login: login,
-            token_short: token_short,
-            token_long: token_long,
+	.then(
+            login => {
+		let [token_short, token_long] = addTokens(ctx);
+		Tarantool.saveTokens({
+		    login: login,
+		    token_short: token_short,
+		    token_long: token_long,
+		});
+	    })
+	.catch(err => {
+	    console.log('ERROR HAPPENED!' + "\n"+ err);
+	    throw new Error(err)
+	    return;
         });
-        },
-        err => {
-        console.err('ERROR HAPPENED!');
-        return;
-        });
+
     logok();
     ctx.redirect('/');
 });
@@ -124,8 +146,9 @@ router.post("/register", (ctx, next) => {
 // -------------------------------------------------------------------
 app
     .use(KoaBody())
+    .use(KoaSession(SESSION_CONFIG, app))
     .use(router.routes())
-    .use(router.allowedMethods())
+    .use(router.allowedMethods());
 
 app.listen(3000);
 
@@ -167,58 +190,50 @@ function hash(word) {
 async function findUser(login) {
     const user = await Db.User.findOne({login: login});
     if (user) {
-    return {
-        login: user.login,
-        passhash: user.passhash
-    };
+	return {
+            login: user.login,
+            passhash: user.passhash
+	};
     } else {
-    return undefined;
+	return undefined;
     }
 }
 
-function registerUser(login, password) {
+async function registerUser(login, password) {
     let user = new Db.User({
-    "login": login,
-    "passhash": hash(password),
+	"login": login,
+	"passhash": hash(password),
     });
-    return user.save(function(err, user) {
-    if (err) {
-        console.err(err);
-        reject(new Error(err));
-    } else {
-        loginsert(user);
-        resolve(login);
-    }
-    });
+    return await user.save();
 }
 
 function addTokens(ctx) {
     let [token_short, token_long] = genTokens();
     console.log(`Generated token ${token_short}, ${token_long}`);
-    ctx.cookies.set("token_short", token_short, { signed: true });
-    ctx.cookies.set("token_long", token_long, { signed: true });
+    ctx.session.token_short =  token_short;
+    ctx.session.token_long =  token_long;
     return [token_short, token_long];
 }
 
 function getTokens(ctx) {
-    let token_short = ctx.cookies.get("token_short", { signed: true });
-    let token_long = ctx.cookies.get("token_long", { signed: true });
+    let token_short = ctx.session.token_short;
+    let token_long = ctx.session.token_long;
     return [token_short, token_long];
 }
 
 function getLogin(ctx) {
-    return ctx.cookies.get("login", { signed: true });
+    return ctx.session.login;
 }
 
 function updateLongToken(ctx) {
     let [_, token_long] = getTokens();
-    ctx.cookies.set("token_long", token_long, { signed: true });
+    ctx.session.token_long =  token_long;
     return token_long;
 
 }
 
 function updateShortToken(ctx) {
     let [token_short, _] = getTokens();
-    ctx.cookies.set("token_short", token_short, { signed: true });
+    ctx.session.token_short =  token_short
     return token_short;
 }

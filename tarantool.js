@@ -69,6 +69,8 @@ async function saveTokens(params) {
     let token_long_expdate  = now.setDate(now.getDate() + 30);
     let token_short_expdate = now.setDate(now.getDate() + 1);
 
+    console.log('Tokens are being saved');
+
     return await Connection.insert("users", [
         login, token_short, token_short_expdate, token_long, token_long_expdate
     ]);
@@ -96,7 +98,7 @@ async function updateToken(params) {
     // Updates where 0-th tuple element equals login
     return await Connection.update("users", 0, login, [
         '=', update_field, value
-    ]);
+    ]).catch(e => {console.log(e)});
 }
 
 module.exports = {

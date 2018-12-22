@@ -65,13 +65,18 @@ async function saveTokens(params) {
     let token_short         = params.token_short;
     let token_long          = params.token_long;
     let login               = params.login;
-    let now                 = new Date();
-    let token_long_expdate  = now.setDate(now.getDate() + 30);
-    let token_short_expdate = now.setDate(now.getDate() + 1);
+    let token_long_expdate  = new Date();
+    let token_short_expdate = new Date();
+    token_long_expdate.setDate(token_long_expdate.getDate() + 30);
+    token_short_expdate.setDate(token_short_expdate.getDate() + 1);
 
     console.log('Tokens are being saved');
 
-    return await Connection.insert("users", [
+    console.log("Replacing", [
+        login, token_short, token_short_expdate, token_long, token_long_expdate
+    ]);
+
+    return await Connection.replace("users", [
         login, token_short, token_short_expdate, token_long, token_long_expdate
     ]);
 }

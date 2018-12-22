@@ -98,8 +98,10 @@ router.post("/login", async (ctx, next) => {
 
     let user = await findUser(ctx.request.body.login);
     if (user && user.passhash == hash(ctx.request.body.password)) {
+	let [token_short, token_long] = addTokens(ctx);
+	addLogin(ctx, user.login);
         console.log("Authentication succeed");
-        let insert_res = Tarantool.saveTokens({
+        let insert_res = await Tarantool.saveTokens({
             token_short: token_short,
             token_long: token_long,
             login: user.login,
@@ -119,17 +121,21 @@ router.get("/register", (ctx, next) => {
     logok();
 });
 
-router.post("/register", (ctx, next) => {
+router.post("/register", async (ctx, next) => {
     logpost("/register");
     console.log(ctx.request.body);
-    registerUser(ctx.request.body.login, ctx.request.body.password)
+    await registerUser(ctx.request.body.login, ctx.request.body.password)
 	.then(
-            login => {
-		let [token_short, token_long] = addTokens(ctx);
+            user => {
+		let [token_long, token_short] = addTokens(ctx);
+		addLogin(ctx, user.login);
 		Tarantool.saveTokens({
-		    login: login,
+		    login: user.login,
 		    token_short: token_short,
 		    token_long: token_long,
+		}).catch( err => {
+		    console.log(err);
+		    throw new Error(err);
 		});
 	    })
 	.catch(err => {
@@ -207,12 +213,23 @@ async function registerUser(login, password) {
     return await user.save();
 }
 
-function addTokens(ctx) {
-    let [token_short, token_long] = genTokens();
-    console.log(`Generated token ${token_short}, ${token_long}`);
+function addTokens(ctx, params) {
+    let token_short;
+    let token_long;
+    if (params == undefined) {
+	[token_short, token_long] = genTokens();
+    } else {
+	token_long = params.token_long;
+	token_short = params.token_short;
+    }
+    console.log(`Added tokens ${token_short}, ${token_long}`);
     ctx.session.token_short =  token_short;
     ctx.session.token_long =  token_long;
     return [token_short, token_long];
+}
+
+function addLogin(ctx, login) {
+    ctx.session.login = login;
 }
 
 function getTokens(ctx) {
@@ -222,6 +239,7 @@ function getTokens(ctx) {
 }
 
 function getLogin(ctx) {
+    console.log('Getting login:' + ctx.session.login);
     return ctx.session.login;
 }
 

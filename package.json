@@ -21,7 +21,7 @@
     "koa-body": "^4.0.4",
     "koa-router": "^7.4.0",
     "koa-session": "^5.10.1",
-    "mongoose": "^5.3.16",
+    "mongoose": "^5.7.5",
     "tarantool-driver": "^3.0.3"
   }
 }
